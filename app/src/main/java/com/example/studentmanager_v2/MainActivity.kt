@@ -1,139 +1,152 @@
 package com.example.studentmanager_v2
-
-import android.database.sqlite.SQLiteDatabase
+import android.content.DialogInterface
+import android.content.Intent
 import android.os.Bundle
-import android.view.LayoutInflater
-import android.widget.Button
-import android.widget.EditText
+import android.view.ContextMenu
+import android.view.Menu
+import android.view.MenuItem
+import android.view.View
+import android.widget.AdapterView
+import android.widget.ListView
 import android.widget.Toast
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-
-
+import androidx.lifecycle.lifecycleScope
+import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var db: SQLiteDatabase
-    private var students: MutableList<StudentModel> = mutableListOf()
-
+    private lateinit var launcher1: ActivityResultLauncher<Intent>
+    private lateinit var launcher2: ActivityResultLauncher<Intent>
+    private lateinit var studentAdapter : StudentAdapter
+    private  lateinit var studentDao : StudentDao
+    var pos = -1
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val path = filesDir.path + "/mydb"
-        db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.CREATE_IF_NECESSARY)
+        studentDao = StudentDatabase.getInstance(this).studentDao()
 
-        db.execSQL("""
-        CREATE TABLE IF NOT EXISTS students (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            studentName TEXT NOT NULL,
-            studentId TEXT NOT NULL UNIQUE
-        )
-    """)
-        // Lấy dữ liệu tu db
-        val cursor = db.rawQuery("SELECT studentName, studentId FROM students", null)
-        if (cursor.moveToFirst()) {
-            do {
-                val name = cursor.getString(0)
-                val id = cursor.getString(1)
-                students.add(StudentModel(name, id))
-            } while (cursor.moveToNext())
-        }
-        cursor.close()
 
-        val studentAdapter = StudentAdapter(
-            students,
-            onEditClick = { adapter, student, position ->
-                val dialogView = LayoutInflater.from(this).inflate(R.layout.layout_dialog_add, null)
-                val editName = dialogView.findViewById<EditText>(R.id.editText_name)
-                val editId = dialogView.findViewById<EditText>(R.id.editText_id)
+        lifecycleScope.launch(Dispatchers.IO) {
 
-                editName.setText(student.studentName)
-                editId.setText(student.studentId)
-
-                AlertDialog.Builder(this)
-                    .setTitle("Chỉnh sửa sinh viên")
-                    .setView(dialogView)
-                    .setPositiveButton("Lưu") { _, _ ->
-                        val updatedName = editName.text.toString().trim()
-                        val updatedId = editId.text.toString().trim()
-
-                        if (updatedName.isEmpty() || updatedId.isEmpty()) {
-                            Toast.makeText(this, "Vui lòng nhập đầy đủ thông tin!", Toast.LENGTH_SHORT).show()
-                            return@setPositiveButton
-                        }
-
-                        // Cập nhật trong SQLite
-                        db.execSQL(
-                            "UPDATE students SET studentName = ?, studentId = ? WHERE studentId = ?",
-                            arrayOf(updatedName, updatedId, student.studentId)
-                        )
-
-                        students[position] = student.copy(studentName = updatedName, studentId = updatedId)
-                        adapter.notifyDataSetChanged()
-                        Toast.makeText(this, "Cập nhật thông tin thành công!", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("Hủy", null)
-                    .show()
-            },
-            onDeleteClick = { adapter, student, position ->
-                AlertDialog.Builder(this)
-                    .setTitle("Xóa sinh viên")
-                    .setMessage("Bạn có chắc chắn muốn xóa sinh viên ${student.studentName} không?")
-                    .setPositiveButton("Xóa") { _, _ ->
-                        val removedStudent = students[position]
-
-                        // Xóa khỏi SQLite
-                        db.execSQL("DELETE FROM students WHERE studentId = ?", arrayOf(removedStudent.studentId))
-
-                        students.removeAt(position)
-                        adapter.notifyDataSetChanged()
-                        Toast.makeText(this, "Đã xóa sinh viên!", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("Hủy", null)
-                    .show()
-            }
-
-        )
-
-        findViewById<RecyclerView>(R.id.recycler_view_students).run {
-            adapter = studentAdapter
-            layoutManager = LinearLayoutManager(this@MainActivity)
         }
 
-        // Them sinh vien
-        findViewById<Button>(R.id.btn_add_new).setOnClickListener {
-            val dialogView = LayoutInflater.from(this).inflate(R.layout.layout_dialog_add, null)
-            val editName = dialogView.findViewById<EditText>(R.id.editText_name)
-            val editId = dialogView.findViewById<EditText>(R.id.editText_id)
 
-            AlertDialog.Builder(this)
-                .setTitle("Thêm sinh viên mới")
-                .setView(dialogView)
-                .setPositiveButton("Thêm") { _, _ ->
-                    val name = editName.text.toString().trim()
-                    val id = editId.text.toString().trim()
+        val listview =findViewById<ListView>(R.id.list_view_students)
+        lifecycleScope.launch(Dispatchers.IO) {
+            studentAdapter = StudentAdapter(studentDao.getAllStudents())
+            listview.adapter = studentAdapter
+        }
 
-                    if (name.isEmpty() || id.isEmpty()) {
-                        Toast.makeText(this, "Vui lòng nhập đầy đủ thông tin!", Toast.LENGTH_SHORT).show()
-                        return@setPositiveButton
+
+        launcher1 = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { it: ActivityResult ->
+            if (it.resultCode == RESULT_OK) {
+                val hoten = it.data?.getStringExtra("name")
+                val mssv = it.data?.getStringExtra("code")
+                if (!hoten.isNullOrEmpty() && !mssv.isNullOrEmpty()) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        studentDao.insertStudent(Student(hoten=hoten, mssv=mssv))
+                        val intent: Intent = getIntent();
+                        finish();  // Kết thúc activity hiện tại
+                        startActivity(intent);
                     }
-
-                    // Lưu vào SQLite
-                    db.execSQL("INSERT INTO students (studentName, studentId) VALUES (?, ?)", arrayOf(name, id))
-                    students.add(StudentModel(name, id))
-                    Toast.makeText(this, "Thêm sinh viên mới thành công!", Toast.LENGTH_SHORT).show()
-                    studentAdapter.notifyDataSetChanged()
                 }
-                .setNegativeButton("Hủy", null)
-                .show()
+                studentAdapter.notifyDataSetChanged()
+                Toast.makeText(this,"Add a student",Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Cancel", Toast.LENGTH_SHORT).show()
+            }
         }
 
+        launcher2 = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { it: ActivityResult ->
+            if (it.resultCode == RESULT_OK) {
+                val hoten = it.data?.getStringExtra("name")
+                val mssv = it.data?.getStringExtra("code")
+                if (!hoten.isNullOrEmpty() && !mssv.isNullOrEmpty()) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val student = studentDao.getStudentsByName(hoten)[0]
+                        studentDao.updateStudent(Student(_id = student._id,hoten=hoten, mssv=mssv))
+                        val intent: Intent = getIntent();
+                        finish();  // Kết thúc activity hiện tại
+                        startActivity(intent);
+                    }
+                }
+                studentAdapter.notifyDataSetChanged()
+                Toast.makeText(this,"Edit a student",Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Cancel", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        registerForContextMenu(listview)
+
+        supportActionBar?.title = "List student"
     }
 
-    override fun onStop() {
-        db.close()
-        super.onStop()
+    override fun onCreateContextMenu(
+        menu: ContextMenu?,
+        v: View?,
+        menuInfo: ContextMenu.ContextMenuInfo?
+    ) {
+        menuInflater.inflate(R.menu.student_delete_adit,menu)
+        super.onCreateContextMenu(menu, v, menuInfo)
+    }
+
+    override fun onContextItemSelected(item: MenuItem): Boolean {
+        pos = (item.menuInfo as AdapterView.AdapterContextMenuInfo).position
+        when(item.itemId){
+            R.id.edit_student ->{
+                val student : Student = studentAdapter.students[pos]
+                val intent = Intent(this, AddStudent::class.java)
+                intent.putExtra("hoten",student.hoten)
+                intent.putExtra("maso",student.mssv)
+                intent.putExtra("action","Edit")
+                launcher2.launch(intent)
+            }
+            R.id.delete_student ->{
+                AlertDialog.Builder(this)
+                    .setTitle("Are you sure to delete ?")
+                    .setMessage(studentAdapter.students[pos].hoten)
+                    .setPositiveButton("YES"){
+                            dialogInterface: DialogInterface, i: Int ->
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            studentDao.deleteByMssv(studentAdapter.students[pos].mssv)
+                            val intent: Intent = getIntent();
+                            finish();  // Kết thúc activity hiện tại
+                            startActivity(intent);
+                        }
+
+
+                    }
+                    .setNegativeButton("CANCEL",null)
+                    .show()
+            }
+        }
+        return super.onContextItemSelected(item)
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.student_menu_bar,menu)
+        return super.onCreateOptionsMenu(menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        when(item.itemId){
+            R.id.add_student -> {
+                val intent = Intent(this, AddStudent::class.java)
+                intent.putExtra("action","Add")
+                launcher1.launch(intent)
+            }
+        }
+        return super.onOptionsItemSelected(item)
     }
 }
